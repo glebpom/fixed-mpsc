@@ -83,7 +83,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             .unwrap();
         })
     });
-    c.bench_function("fixed", move |b| {
+    c.bench_function("fixed option", move |b| {
         b.iter(|| {
             let mut rt = Runtime::new().unwrap();
 
@@ -103,6 +103,40 @@ fn criterion_benchmark(c: &mut Criterion) {
             rt.spawn(
                 stream::iter_ok::<_, ()>(1u32..10000)
                     .and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap())))
+                    .forward(tx.sink_map_err(|_| ()))
+                    .then(|_| Ok::<(), ()>(())),
+            );
+            rt.block_on(
+                rx.for_each(|r| {
+                    let _ = black_box(r);
+                    Ok::<(), ()>(())
+                })
+                .then(|_| Ok::<(), ()>(())),
+            )
+            .unwrap();
+        })
+    });
+
+    c.bench_function("fixed zero", move |b| {
+        b.iter(|| {
+            let mut rt = Runtime::new().unwrap();
+
+            let (tx, rx) = fixed_mpsc::channel::<[u32; BUF_SIZE], u32>();
+            rt.spawn(
+                stream::iter_ok::<_, ()>(1u32..10000)
+                    .and_then(|r| lazy(move || Ok(r)))
+                    .forward(tx.clone().sink_map_err(|_| ()))
+                    .then(|_| Ok::<(), ()>(())),
+            );
+            rt.spawn(
+                stream::iter_ok::<_, ()>(1u32..10000)
+                    .and_then(|r| lazy(move || Ok(r)))
+                    .forward(tx.clone().sink_map_err(|_| ()))
+                    .then(|_| Ok::<(), ()>(())),
+            );
+            rt.spawn(
+                stream::iter_ok::<_, ()>(1u32..10000)
+                    .and_then(|r| lazy(move || Ok(r)))
                     .forward(tx.sink_map_err(|_| ()))
                     .then(|_| Ok::<(), ()>(())),
             );

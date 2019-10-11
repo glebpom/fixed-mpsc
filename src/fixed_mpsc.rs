@@ -13,12 +13,15 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
+use std::marker::PhantomData;
 use std::mem;
 use std::rc::{Rc, Weak};
 
 use fixed_vec_deque::{Array, FixedVecDeque};
 use futures::task::{self, Task};
-use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
+use futures::{Async, AsyncSink, Poll, Sink, StartSend, Stream};
+
+use crate::Container;
 
 /// Creates a bounded in-memory channel with buffered storage.
 ///
@@ -28,12 +31,14 @@ use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 /// sending a message through this channel performs no dynamic allocation.
 pub fn channel<T, I>() -> (Sender<T, I>, Receiver<T, I>)
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     let shared = Rc::new(RefCell::new(Shared {
         buffer: FixedVecDeque::new(),
         blocked_senders: VecDeque::new(),
         blocked_recv: None,
+        _item: Default::default(),
     }));
     let sender = Sender {
         shared: Rc::downgrade(&shared),
@@ -47,11 +52,13 @@ where
 #[derive(Debug)]
 struct Shared<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     buffer: FixedVecDeque<T>,
     blocked_senders: VecDeque<Task>,
     blocked_recv: Option<Task>,
+    _item: PhantomData<I>,
 }
 
 /// The transmission end of a channel.
@@ -60,14 +67,16 @@ where
 #[derive(Debug)]
 pub struct Sender<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     shared: Weak<RefCell<Shared<T, I>>>,
 }
 
 impl<T, I> Sender<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     fn do_send(&self, msg: I) -> StartSend<I, SendError<I>> {
         let shared = match self.shared.upgrade() {
@@ -80,7 +89,7 @@ where
             shared.blocked_senders.push_back(task::current());
             Ok(AsyncSink::NotReady(msg))
         } else {
-            *shared.buffer.push_back() = Some(msg);
+            *shared.buffer.push_back() = Container::wrap(msg);
             if let Some(task) = shared.blocked_recv.take() {
                 task.notify();
             }
@@ -91,7 +100,8 @@ where
 
 impl<T, I> Clone for Sender<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     fn clone(&self) -> Self {
         Sender {
@@ -102,7 +112,8 @@ where
 
 impl<T, I> Sink for Sender<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     type SinkItem = I;
     type SinkError = SendError<I>;
@@ -122,7 +133,8 @@ where
 
 impl<T, I> Drop for Sender<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     fn drop(&mut self) {
         let shared = match self.shared.upgrade() {
@@ -148,7 +160,8 @@ where
 #[derive(Debug)]
 pub struct Receiver<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     state: State<T, I>,
 }
@@ -158,7 +171,8 @@ where
 #[derive(Debug)]
 enum State<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     Open(Rc<RefCell<Shared<T, I>>>),
     Closed(FixedVecDeque<T>),
@@ -166,7 +180,8 @@ where
 
 impl<T, I> Receiver<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     /// Closes the receiving half
     ///
@@ -191,7 +206,8 @@ where
 
 impl<T, I> Stream for Receiver<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     type Item = I;
     type Error = ();
@@ -200,7 +216,7 @@ where
         let me = match self.state {
             State::Open(ref mut me) => me,
             State::Closed(ref mut items) => {
-                return Ok(Async::Ready(items.pop_front().map(|r| r.take().unwrap())));
+                return Ok(Async::Ready(items.pop_front().map(|r| r.extract())));
             }
         };
 
@@ -208,16 +224,12 @@ where
             // All senders have been dropped, so drain the buffer and end the
             // stream.
             return Ok(Async::Ready(
-                shared
-                    .borrow_mut()
-                    .buffer
-                    .pop_front()
-                    .map(|r| r.take().unwrap()),
+                shared.borrow_mut().buffer.pop_front().map(|r| r.extract()),
             ));
         }
 
         let mut shared = me.borrow_mut();
-        if let Some(msg) = shared.buffer.pop_front().map(|r| r.take().unwrap()) {
+        if let Some(msg) = shared.buffer.pop_front().map(|r| r.extract()) {
             if let Some(task) = shared.blocked_senders.pop_front() {
                 drop(shared);
                 task.notify();
@@ -232,7 +244,8 @@ where
 
 impl<T, I> Drop for Receiver<T, I>
 where
-    T: Array<Item = Option<I>>,
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
 {
     fn drop(&mut self) {
         self.close();
