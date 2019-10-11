@@ -18,6 +18,7 @@ use futures::{Future, Sink, Stream};
 use std::collections::HashMap;
 use tokio::prelude::*;
 use tokio::runtime::current_thread::Runtime;
+use fixed_mpsc::slice_deque_mpsc;
 
 #[derive(Debug)]
 struct LargeStruct {
@@ -67,6 +68,73 @@ fn criterion_benchmark(c: &mut Criterion) {
                     let mut rt = Runtime::new().unwrap();
 
                     let (tx, rx) = futures_mpsc::channel(size);
+                    for _ in 0..4 {
+                        rt.spawn(
+                            stream::iter_ok::<_, ()>(1u32..10000)
+                                .and_then(|r| {
+                                    lazy(move || {
+                                        Ok(black_box(LargeStruct {
+                                            a: 1235245,
+                                            b: [50; 32],
+                                            c: "12321525".to_string(),
+                                            d: Default::default(),
+                                        }))
+                                    })
+                                })
+                                .forward(tx.clone().sink_map_err(|_| ()))
+                                .then(|_| Ok::<(), ()>(())),
+                        );
+                    }
+                    mem::drop(tx);
+                    rt.block_on(
+                        rx.for_each(|r| {
+                            let _ = black_box(r);
+                            Ok::<(), ()>(())
+                        })
+                        .then(|_| Ok::<(), ()>(())),
+                    )
+                    .unwrap();
+                })
+            },
+        );
+
+
+        group.bench_with_input(
+            BenchmarkId::new("slice_deque_mpsc u32", size),
+            size,
+            move |b, &size| {
+                b.iter(|| {
+                    let mut rt = Runtime::new().unwrap();
+
+                    let (tx, rx) = slice_deque_mpsc::channel(size);
+                    for _ in 0..4 {
+                        rt.spawn(
+                            stream::iter_ok::<_, ()>(1u32..10000)
+                                .and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap())))
+                                .forward(tx.clone().sink_map_err(|_| ()))
+                                .then(|_| Ok::<(), ()>(())),
+                        );
+                    }
+                    mem::drop(tx);
+                    rt.block_on(
+                        rx.for_each(|r| {
+                            let _ = black_box(r);
+                            Ok::<(), ()>(())
+                        })
+                        .then(|_| Ok::<(), ()>(())),
+                    )
+                    .unwrap();
+                })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("slice_deque_mpsc LargeStruct", size),
+            size,
+            move |b, &size| {
+                b.iter(|| {
+                    let mut rt = Runtime::new().unwrap();
+
+                    let (tx, rx) = slice_deque_mpsc::channel(size);
                     for _ in 0..4 {
                         rt.spawn(
                             stream::iter_ok::<_, ()>(1u32..10000)

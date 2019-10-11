@@ -6,6 +6,7 @@ pub use fixed_mpsc::channel_from_fixed_vec_deque;
 pub use fixed_mpsc::{channel, Receiver, Sender};
 
 mod fixed_mpsc;
+pub mod slice_deque_mpsc;
 
 /// Trait which defines the element of `FixedVecDeque` inside the `fixed-mpsc` channel
 ///
