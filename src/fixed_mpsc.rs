@@ -4,6 +4,9 @@
 //!
 //! These queues are the same as those in `futures::sync`, except they're not
 //! intended to be sent across threads.
+//!
+//! This implementation is based on `futures::unsync::mpsc` implementation,
+//! but use `fixed_vec_deque` crate instead of `std::collections::VecDeque`
 
 use std::any::Any;
 use std::cell::RefCell;
@@ -14,13 +17,8 @@ use std::mem;
 use std::rc::{Rc, Weak};
 
 use fixed_vec_deque::{Array, FixedVecDeque};
-use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
-use futures::future::Executor;
-use futures::sink::SendAll;
 use futures::task::{self, Task};
-use futures::unsync::oneshot;
-
-use crate::resultstream::{self, Results};
+use futures::{Async, AsyncSink, Future, Poll, Sink, StartSend, Stream};
 
 /// Creates a bounded in-memory channel with buffered storage.
 ///
@@ -28,19 +26,29 @@ use crate::resultstream::{self, Results};
 /// traits which can be used to communicate a stream of values between tasks
 /// with backpressure. The channel capacity is exactly `buffer`. On average,
 /// sending a message through this channel performs no dynamic allocation.
-pub fn channel<T, I>() -> (Sender<T, I>, Receiver<T, I>) where T: Array<Item=Option<I>> {
+pub fn channel<T, I>() -> (Sender<T, I>, Receiver<T, I>)
+where
+    T: Array<Item = Option<I>>,
+{
     let shared = Rc::new(RefCell::new(Shared {
         buffer: FixedVecDeque::new(),
         blocked_senders: VecDeque::new(),
         blocked_recv: None,
     }));
-    let sender = Sender { shared: Rc::downgrade(&shared) };
-    let receiver = Receiver { state: State::Open(shared) };
+    let sender = Sender {
+        shared: Rc::downgrade(&shared),
+    };
+    let receiver = Receiver {
+        state: State::Open(shared),
+    };
     (sender, receiver)
 }
 
 #[derive(Debug)]
-struct Shared<T, I> where T: Array<Item=Option<I>> {
+struct Shared<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     buffer: FixedVecDeque<T>,
     blocked_senders: VecDeque<Task>,
     blocked_recv: Option<Task>,
@@ -50,11 +58,17 @@ struct Shared<T, I> where T: Array<Item=Option<I>> {
 ///
 /// This is created by the `channel` function.
 #[derive(Debug)]
-pub struct Sender<T, I> where T: Array<Item=Option<I>> {
+pub struct Sender<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     shared: Weak<RefCell<Shared<T, I>>>,
 }
 
-impl<T, I> Sender<T, I> where T: Array<Item=Option<I>> {
+impl<T, I> Sender<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     fn do_send(&self, msg: I) -> StartSend<I, SendError<I>> {
         let shared = match self.shared.upgrade() {
             Some(shared) => shared,
@@ -75,13 +89,21 @@ impl<T, I> Sender<T, I> where T: Array<Item=Option<I>> {
     }
 }
 
-impl<T, I> Clone for Sender<T, I> where T: Array<Item=Option<I>> {
+impl<T, I> Clone for Sender<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     fn clone(&self) -> Self {
-        Sender { shared: self.shared.clone() }
+        Sender {
+            shared: self.shared.clone(),
+        }
     }
 }
 
-impl<T, I> Sink for Sender<T, I> where T: Array<Item=Option<I>> {
+impl<T, I> Sink for Sender<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     type SinkItem = I;
     type SinkError = SendError<I>;
 
@@ -98,7 +120,10 @@ impl<T, I> Sink for Sender<T, I> where T: Array<Item=Option<I>> {
     }
 }
 
-impl<T, I> Drop for Sender<T, I> where T: Array<Item=Option<I>> {
+impl<T, I> Drop for Sender<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     fn drop(&mut self) {
         let shared = match self.shared.upgrade() {
             Some(shared) => shared,
@@ -121,19 +146,28 @@ impl<T, I> Drop for Sender<T, I> where T: Array<Item=Option<I>> {
 ///
 /// This is created by the `channel` function.
 #[derive(Debug)]
-pub struct Receiver<T, I> where T: Array<Item=Option<I>> {
+pub struct Receiver<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     state: State<T, I>,
 }
 
 /// Possible states of a receiver. We're either Open (can receive more messages)
 /// or we're closed with a list of messages we have left to receive.
 #[derive(Debug)]
-enum State<T, I> where T: Array<Item=Option<I>> {
+enum State<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     Open(Rc<RefCell<Shared<T, I>>>),
     Closed(FixedVecDeque<T>),
 }
 
-impl<T, I> Receiver<T, I> where T: Array<Item=Option<I>> {
+impl<T, I> Receiver<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     /// Closes the receiving half
     ///
     /// This prevents any further messages from being sent on the channel while
@@ -155,7 +189,10 @@ impl<T, I> Receiver<T, I> where T: Array<Item=Option<I>> {
     }
 }
 
-impl<T, I> Stream for Receiver<T, I> where T: Array<Item=Option<I>> {
+impl<T, I> Stream for Receiver<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     type Item = I;
     type Error = ();
 
@@ -170,7 +207,13 @@ impl<T, I> Stream for Receiver<T, I> where T: Array<Item=Option<I>> {
         if let Some(shared) = Rc::get_mut(me) {
             // All senders have been dropped, so drain the buffer and end the
             // stream.
-            return Ok(Async::Ready(shared.borrow_mut().buffer.pop_front().map(|r| r.take().unwrap())));
+            return Ok(Async::Ready(
+                shared
+                    .borrow_mut()
+                    .buffer
+                    .pop_front()
+                    .map(|r| r.take().unwrap()),
+            ));
         }
 
         let mut shared = me.borrow_mut();
@@ -187,7 +230,10 @@ impl<T, I> Stream for Receiver<T, I> where T: Array<Item=Option<I>> {
     }
 }
 
-impl<T, I> Drop for Receiver<T, I> where T: Array<Item=Option<I>> {
+impl<T, I> Drop for Receiver<T, I>
+where
+    T: Array<Item = Option<I>>,
+{
     fn drop(&mut self) {
         self.close();
     }
@@ -199,9 +245,7 @@ pub struct SendError<I>(I);
 
 impl<I> fmt::Debug for SendError<I> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_tuple("SendError")
-            .field(&"...")
-            .finish()
+        fmt.debug_tuple("SendError").field(&"...").finish()
     }
 }
 
