@@ -2,6 +2,7 @@ extern crate fixed_vec_deque;
 
 use core::mem;
 
+pub use fixed_mpsc::channel_from_fixed_vec_deque;
 pub use fixed_mpsc::{channel, Receiver, Sender};
 
 mod fixed_mpsc;
@@ -10,6 +11,8 @@ mod fixed_mpsc;
 ///
 /// We need a container with defined `Default` trait in order to store the data in `FixedVecDeque`.
 /// This trait should be implemented on the type, which is passed to an array storage
+///
+/// There is a guarantee, that `extract` would not be called twice
 pub trait Container<I>: Default + Sized {
     fn extract(&mut self) -> I;
     fn wrap(item: I) -> Self;

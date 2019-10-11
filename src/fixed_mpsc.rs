@@ -34,8 +34,18 @@ where
     T: Array,
     T::Item: Container<I> + std::fmt::Debug,
 {
+    channel_from_fixed_vec_deque(FixedVecDeque::new())
+}
+
+pub fn channel_from_fixed_vec_deque<T, I>(
+    buffer: FixedVecDeque<T>,
+) -> (Sender<T, I>, Receiver<T, I>)
+where
+    T: Array,
+    T::Item: Container<I> + std::fmt::Debug,
+{
     let shared = Rc::new(RefCell::new(Shared {
-        buffer: FixedVecDeque::new(),
+        buffer,
         blocked_senders: VecDeque::new(),
         blocked_recv: None,
         _item: Default::default(),

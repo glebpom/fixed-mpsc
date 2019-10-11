@@ -9,7 +9,7 @@ futures = "0.1.29"
 fixed-vec-deque = "0.1.8"
 
 [dev-dependencies]
-criterion = "0.2"
+criterion = "0.3"
 tokio = "0.1.22"
 tokio-current-thread = "0.1.6"
 
