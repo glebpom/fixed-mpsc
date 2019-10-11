@@ -17,10 +17,26 @@ use futures::lazy;
 pub const BUF_SIZE: usize = 64;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("futures", move |b| b.iter(|| {
+    c.bench_function("futures unsync", move |b| b.iter(|| {
         let mut rt = Runtime::new().unwrap();
 
         let (tx, rx) = futures_mpsc::channel(BUF_SIZE);
+        rt.spawn(stream::iter_ok::<_, ()>(1u32..10000).and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap()))).forward(tx.clone().sink_map_err(|_| ())).then(|_| Ok::<(),()>(())));
+        rt.spawn(stream::iter_ok::<_, ()>(1u32..10000).and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap()))).forward(tx.clone().sink_map_err(|_| ())).then(|_| Ok::<(),()>(())));
+        rt.spawn(stream::iter_ok::<_, ()>(1u32..10000).and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap()))).forward(tx.sink_map_err(|_| ())).then(|_| Ok::<(),()>(())));
+        rt.block_on(
+            rx
+                .for_each(|r| {
+                    let _ = black_box(r);
+                    Ok::<(),()>(())
+                })
+                .then(|_| Ok::<(), ()>(()))
+        );
+    }));
+    c.bench_function("futures sync", move |b| b.iter(|| {
+        let mut rt = Runtime::new().unwrap();
+
+        let (tx, rx) = futures::sync::mpsc::channel(BUF_SIZE);
         rt.spawn(stream::iter_ok::<_, ()>(1u32..10000).and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap()))).forward(tx.clone().sink_map_err(|_| ())).then(|_| Ok::<(),()>(())));
         rt.spawn(stream::iter_ok::<_, ()>(1u32..10000).and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap()))).forward(tx.clone().sink_map_err(|_| ())).then(|_| Ok::<(),()>(())));
         rt.spawn(stream::iter_ok::<_, ()>(1u32..10000).and_then(|r| lazy(move || Ok(NonZeroU32::new(r).unwrap()))).forward(tx.sink_map_err(|_| ())).then(|_| Ok::<(),()>(())));
